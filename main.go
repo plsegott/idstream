@@ -25,5 +25,5 @@ func main() {
 		compare.RunLookahead(accessor, start, 500, 24*time.Hour),
 	}
 
-	compare.PrintResults(results)
+	compare.PrintResults(results, seed.CountSuccessful(s.Ads))
 }

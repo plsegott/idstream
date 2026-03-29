@@ -1,48 +1,50 @@
 # idstream
 
-A dynamic ID discovery engine for APIs that assign sequential integer IDs. Given a stream of resources that go live over time, idstream finds them as fast as possible with minimal lag.
+Real-time discovery engine for sequential ID streams. Crawls APIs that assign monotonically increasing integer IDs and surfaces new resources with minimal discovery latency.
 
-## The Problem
+## Problem
 
-Some APIs assign resources incrementing numeric IDs. A resource may not be immediately available after creation — it could be processing, delayed, or permanently failed — and the API returns the same error in all cases. A consumer has no way to know whether to retry or move on.
+APIs that issue sequential IDs create a discovery problem: a consumer polling `GET /resource/:id` cannot distinguish between an ID that does not exist yet, is still processing, or has permanently failed — all return the same error. Naive linear polling is too slow; blind parallel workers waste throughput on dead IDs.
 
-idstream implements several strategies for discovering these resources efficiently, each making different tradeoffs between coverage, lag, and API call volume.
+idstream implements and benchmarks several strategies for solving this, each making different tradeoffs between throughput, coverage, and discovery latency.
 
 ## Algorithms
 
 | Algorithm | Strategy |
 |---|---|
-| **Naive** | Single-threaded linear scan. Waits 1s on error before retrying. |
-| **Chaser** | N concurrent workers racing to claim the next index. Retries up to M times with a 10s gap, then abandons and moves on. |
-| **BinaryFrontier** | Anchors the live frontier via `GetLatestLiveAd`, computes its index from the ID, then concurrently scans the known window. Maintains a retry map for indexes that weren't live yet, expiring them after the maximum possible delay. |
-| **Lookahead** | Single-threaded. On every tick, finds the frontier and sweeps N steps ahead of it — simple and effective at catching resources the moment they go live. |
+| **Naive** | Single-threaded linear scan with 1s backoff on error. |
+| **Chaser** | N concurrent workers with shared index coordination. Each worker retries its assigned index up to M times before abandoning and claiming the next. |
+| **BinaryFrontier** | Uses `GetLatestLiveAd` to anchor the live frontier, derives its index arithmetically from the sequential ID, then fans out a concurrent scan over the known window. Tracks a retry set for indexes that were not yet live at scan time, evicting them after the maximum processing delay. |
+| **Lookahead** | Single-threaded. On each tick, resolves the current frontier and sweeps a fixed window ahead of it. Low complexity, high coverage. |
 
-## Benchmark Results (24h simulation, slow → burst → cooldown)
+## Benchmark
+
+24-hour simulation across three arrival rate phases (slow → burst → cooldown), Poisson-distributed.
 
 ```
-Algorithm      Attempts   Discovered   AvgLag       MaxLag
-naive          86406      5            1m48s        3m0s
-chaser         1039943    13837        2h26m        10h3m
-binaryfrontier 4251784    78910        5s           4m29s
-lookahead      43079256   85987        13s          1m21s
+Total discoverable resources: 79,322
+
+Algorithm        Attempts      Discovered   Coverage   AvgLatency   MaxLatency
+naive            86,406        5            0.0%       1m48s        3m0s
+chaser           2,090,137     16,377       20.6%      3h14m        13h51m
+binaryfrontier   4,884,714     79,153       99.8%      5s           4m29s
+lookahead        43,079,256    5,537        7.0%       509ms        7.9s
 ```
 
-BinaryFrontier wins on lag. Lookahead wins on coverage.
+BinaryFrontier achieves 99.8% coverage with 5s average discovery latency.
 
-## Running
-
-The `seed/` package provides a simulated API for benchmarking — it generates a realistic resource stream with Poisson-distributed arrival rates and enforces live/failed timing rules. It is not part of the discovery engine itself.
+## Usage
 
 ```bash
 go run .
 ```
 
-Adjust the phases and simulation duration in `main.go`.
+Configure arrival phases and simulation window in `main.go`.
 
 ## Structure
 
 ```
-algorithms/         Discovery strategies (Naive, Chaser, BinaryFrontier, Lookahead)
-seed/               Simulated API for benchmarking
-testing/            Recorder, result types, and comparison tooling
+algorithms/    Discovery strategies
+seed/          Simulated API for benchmarking (not part of the engine)
+testing/       Recorder, result types, comparison tooling
 ```

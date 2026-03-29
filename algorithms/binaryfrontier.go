@@ -15,10 +15,12 @@ type frontierGetter interface {
 	GetLatestLiveAd(now time.Time) (seed.Ad, error)
 }
 
-// maxAdDelay is the upper bound on how long an ad can take to go live after
-// creation (seed generates 2–7 minute delays). After this window an error
-// means the ad permanently failed and we stop retrying.
-const maxAdDelay = 8 * time.Minute
+// maxProcessingDelay is the upper bound on resource processing time
+// (seed generates 2–7 minute delays). After this window a persistent error
+// indicates permanent failure and the index is evicted from the retry set.
+const maxProcessingDelay = 8 * time.Minute
+const binaryFrontierTickInterval = 10 * time.Second
+const binaryFrontierErrorBackoff = 1 * time.Second
 
 type pendingEntry struct {
 	firstAttempt time.Time
@@ -26,12 +28,12 @@ type pendingEntry struct {
 
 // BinaryFrontier discovers ads by:
 //  1. Calling GetLatestLiveAd to anchor the live frontier.
-//  2. Computing the frontier slice index from the ID difference (IDs are
-//     sequential integers, so frontierIndex = frontierID - baseID).
-//  3. Scanning [nextIndex, frontierIndex] concurrently with workers.
-//  4. Keeping a retry window for indexes that failed — they get re-attempted
-//     each round until maxAdDelay has elapsed (after which they are
-//     permanently dead due to Success=false in the seed).
+//  2. Deriving the frontier's slice index arithmetically from the sequential ID
+//     (frontierIndex = frontierID - baseID).
+//  3. Fanning out a concurrent scan over [nextIndex, frontierIndex].
+//  4. Maintaining a retry set for indexes not yet live at scan time —
+//     retried each round until maxProcessingDelay has elapsed, after which
+//     persistent errors are treated as permanent failures.
 func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSimTime time.Duration) {
 	fg, ok := getter.(frontierGetter)
 	if !ok {
@@ -54,14 +56,14 @@ func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSi
 	for !currentTime.After(endTime) {
 		frontierAd, err := fg.GetLatestLiveAd(currentTime)
 		if err != nil {
-			currentTime = currentTime.Add(1 * time.Second)
+			currentTime = currentTime.Add(binaryFrontierErrorBackoff)
 			continue
 		}
 
 		if baseID == -1 {
 			first, err := fg.GetAd(0, currentTime)
 			if err != nil {
-				currentTime = currentTime.Add(1 * time.Second)
+				currentTime = currentTime.Add(binaryFrontierErrorBackoff)
 				continue
 			}
 			id, _ := strconv.Atoi(first.Id)
@@ -75,7 +77,7 @@ func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSi
 		toScan := make([]int, 0, len(pending)+(frontierIndex-nextIndex+1))
 
 		for idx, entry := range pending {
-			if currentTime.Sub(entry.firstAttempt) < maxAdDelay {
+			if currentTime.Sub(entry.firstAttempt) < maxProcessingDelay {
 				toScan = append(toScan, idx)
 			} else {
 				delete(pending, idx)
@@ -131,6 +133,6 @@ func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSi
 		}
 
 		nextIndex = frontierIndex + 1
-		currentTime = currentTime.Add(10 * time.Second)
+		currentTime = currentTime.Add(binaryFrontierTickInterval)
 	}
 }

@@ -8,12 +8,12 @@ import (
 )
 
 type Stats struct {
-	TotalAds             int
-	DiscoveredAds        int
-	MissedAds            int
-	CoverageRate         float64
-	AverageDiscoveredLag time.Duration
-	MaxDiscoveredLag     time.Duration
+	TotalAds                int
+	DiscoveredAds           int
+	MissedAds               int
+	CoverageRate            float64
+	AverageDiscoveryLatency time.Duration
+	MaxDiscoveryLatency     time.Duration
 
 	AverageFrontierGap float64
 	MaxFrontierGap     int
@@ -36,8 +36,8 @@ func Evaluate(ads []seed.Ad, result common.Result) Stats {
 		stats.CoverageRate = float64(stats.DiscoveredAds) / float64(len(ads))
 	}
 
-	stats.AverageDiscoveredLag = result.AverageLag
-	stats.MaxDiscoveredLag = result.MaxLag
+	stats.AverageDiscoveryLatency = result.AverageLatency
+	stats.MaxDiscoveryLatency = result.MaxLatency
 
 	var totalGap int
 	var gapSamples int

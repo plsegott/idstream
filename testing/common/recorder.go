@@ -1,6 +1,7 @@
 package common
 
 import (
+	"sync"
 	"time"
 
 	"github.com/plsegott/idstream/seed"
@@ -12,21 +13,27 @@ type frontierInner interface {
 }
 
 type Recorder struct {
-	inner  Getter
-	result Result
+	mu      sync.Mutex
+	inner   Getter
+	seen    map[int]bool
+	result  Result
 }
 
 func NewRecorder(inner Getter) *Recorder {
 	return &Recorder{
 		inner: inner,
+		seen:  make(map[int]bool),
 		result: Result{
-			MinLag: -1,
+			MinLatency: -1,
 		},
 	}
 }
 
 func (r *Recorder) GetAd(index int, now time.Time) (seed.Ad, error) {
 	ad, err := r.inner.GetAd(index, now)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	r.result.Attempts++
 
@@ -37,25 +44,29 @@ func (r *Recorder) GetAd(index int, now time.Time) (seed.Ad, error) {
 		return ad, err
 	}
 
-	lag := now.Sub(ad.LiveAt)
-	if lag < 0 {
-		lag = 0
+	if index > r.result.LastIndexSeen {
+		r.result.LastIndexSeen = index
+	}
+
+	// Only count unique discoveries.
+	if r.seen[index] {
+		return ad, nil
+	}
+	r.seen[index] = true
+
+	latency := now.Sub(ad.LiveAt)
+	if latency < 0 {
+		latency = 0
 	}
 
 	r.result.DiscoveredAds++
-	if ad.Success {
-		r.result.SuccessfulAds++
-	}
 
-	r.result.TotalLag += lag
-	if lag > r.result.MaxLag {
-		r.result.MaxLag = lag
+	r.result.TotalLatency += latency
+	if latency > r.result.MaxLatency {
+		r.result.MaxLatency = latency
 	}
-	if r.result.MinLag == -1 || lag < r.result.MinLag {
-		r.result.MinLag = lag
-	}
-	if index > r.result.LastIndexSeen {
-		r.result.LastIndexSeen = index
+	if r.result.MinLatency == -1 || latency < r.result.MinLatency {
+		r.result.MinLatency = latency
 	}
 
 	r.result.Discoveries = append(r.result.Discoveries, Discovery{
@@ -77,6 +88,9 @@ func (r *Recorder) GetLatestLiveAd(now time.Time) (seed.Ad, error) {
 }
 
 func (r *Recorder) RecordAbandoned(index int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.result.AbandonedIDs++
 	if index > r.result.LastIndexSeen {
 		r.result.LastIndexSeen = index
@@ -87,9 +101,9 @@ func (r *Recorder) Result() Result {
 	out := r.result
 
 	if out.DiscoveredAds > 0 {
-		out.AverageLag = out.TotalLag / time.Duration(out.DiscoveredAds)
+		out.AverageLatency = out.TotalLatency / time.Duration(out.DiscoveredAds)
 	} else {
-		out.MinLag = 0
+		out.MinLatency = 0
 	}
 
 	return out

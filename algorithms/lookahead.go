@@ -7,8 +7,12 @@ import (
 	"github.com/plsegott/idstream/testing/common"
 )
 
-// Lookahead finds the current live frontier and scans the next `steps` indexes
-// ahead of it on every tick, in a single thread.
+const lookaheadTickInterval = 1 * time.Second
+const lookaheadDefaultSteps = 500
+
+// Lookahead resolves the live frontier on each tick and sweeps a fixed window
+// of `steps` indexes ahead of it in a single thread, minimising missed
+// resources by repeatedly covering the active processing zone.
 func Lookahead(getter common.Getter, start time.Time, steps int, maxSimTime time.Duration) {
 	fg, ok := getter.(frontierGetter)
 	if !ok {
@@ -17,7 +21,7 @@ func Lookahead(getter common.Getter, start time.Time, steps int, maxSimTime time
 	}
 
 	if steps <= 0 {
-		steps = 500
+		steps = lookaheadDefaultSteps
 	}
 
 	currentTime := start
@@ -27,14 +31,14 @@ func Lookahead(getter common.Getter, start time.Time, steps int, maxSimTime time
 	for !currentTime.After(endTime) {
 		frontierAd, err := fg.GetLatestLiveAd(currentTime)
 		if err != nil {
-			currentTime = currentTime.Add(1 * time.Second)
+			currentTime = currentTime.Add(lookaheadTickInterval)
 			continue
 		}
 
 		if baseID == -1 {
 			first, err := fg.GetAd(0, currentTime)
 			if err != nil {
-				currentTime = currentTime.Add(1 * time.Second)
+				currentTime = currentTime.Add(lookaheadTickInterval)
 				continue
 			}
 			id, _ := strconv.Atoi(first.Id)
@@ -48,6 +52,6 @@ func Lookahead(getter common.Getter, start time.Time, steps int, maxSimTime time
 			fg.GetAd(i, currentTime)
 		}
 
-		currentTime = currentTime.Add(1 * time.Second)
+		currentTime = currentTime.Add(lookaheadTickInterval)
 	}
 }

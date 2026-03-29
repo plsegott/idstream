@@ -7,6 +7,8 @@ import (
 	"github.com/plsegott/idstream/testing/common"
 )
 
+const chaserTickInterval = 10 * time.Second
+
 type coordinator struct {
 	mu        sync.Mutex
 	nextIndex int
@@ -73,7 +75,7 @@ func runWorker(getter common.Getter, start time.Time, coord *coordinator, maxAtt
 				continue
 			}
 
-			currentTime = currentTime.Add(10 * time.Second)
+			currentTime = currentTime.Add(chaserTickInterval)
 			continue
 		}
 

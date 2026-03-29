@@ -50,23 +50,27 @@ func RunLookahead(accessor *seed.Accessor, start time.Time, steps int, maxSimTim
 	}
 }
 
-func PrintResults(results []NamedResult) {
+func PrintResults(results []NamedResult, totalSuccessful int) {
+	fmt.Printf("Total discoverable resources: %d\n\n", totalSuccessful)
 	fmt.Printf(
-		"%-12s %-10s %-12s %-12s %-12s %-12s %-12s %-12s\n",
-		"Algorithm", "Attempts", "Discovered", "Successful", "Abandoned", "AvgLag", "MaxLag", "LastIndex",
+		"%-16s %-10s %-12s %-10s %-12s %-12s %-12s\n",
+		"Algorithm", "Attempts", "Discovered", "Coverage", "Abandoned", "AvgLatency", "MaxLatency",
 	)
 
 	for _, r := range results {
+		coverage := "0.0%"
+		if totalSuccessful > 0 {
+			coverage = fmt.Sprintf("%.1f%%", float64(r.Result.DiscoveredAds)/float64(totalSuccessful)*100)
+		}
 		fmt.Printf(
-			"%-12s %-10d %-12d %-12d %-12d %-12s %-12s %-12d\n",
+			"%-16s %-10d %-12d %-10s %-12d %-12s %-12s\n",
 			r.Name,
 			r.Result.Attempts,
 			r.Result.DiscoveredAds,
-			r.Result.SuccessfulAds,
+			coverage,
 			r.Result.AbandonedIDs,
-			r.Result.AverageLag.String(),
-			r.Result.MaxLag.String(),
-			r.Result.LastIndexSeen,
+			r.Result.AverageLatency.String(),
+			r.Result.MaxLatency.String(),
 		)
 	}
 }

@@ -19,10 +19,10 @@ type Result struct {
 	AbandonedIDs  int
 	LastIndexSeen int
 
-	TotalLag   time.Duration
-	MaxLag     time.Duration
-	MinLag     time.Duration
-	AverageLag time.Duration
+	TotalLatency   time.Duration
+	MaxLatency     time.Duration
+	MinLatency     time.Duration
+	AverageLatency time.Duration
 
 	Discoveries []Discovery
 }

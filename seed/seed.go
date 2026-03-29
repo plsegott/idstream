@@ -30,8 +30,11 @@ func CreateSeed(seed int64) *rand.Rand {
 	return rand.New(rand.NewSource(seed))
 }
 
+const minProcessingDelay = 2 * time.Minute
+const maxProcessingDelayRange = 5 * time.Minute
+
 func GenerateAd(r *rand.Rand, created time.Time, id int64) Ad {
-	delay := 2*time.Minute + time.Duration(r.Int63n(int64(5*time.Minute)))
+	delay := minProcessingDelay + time.Duration(r.Int63n(int64(maxProcessingDelayRange)))
 
 	return Ad{
 		Id:        fmt.Sprintf("%d", id),
@@ -41,7 +44,8 @@ func GenerateAd(r *rand.Rand, created time.Time, id int64) Ad {
 	}
 }
 
-// Knuth Poisson sampler
+// poisson returns a Poisson-distributed random integer with mean lambda,
+// using the Knuth algorithm.
 func poisson(r *rand.Rand, lambda float64) int {
 	l := math.Exp(-lambda)
 	k := 0
