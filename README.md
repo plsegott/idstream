@@ -8,6 +8,8 @@ APIs that issue sequential IDs create a discovery problem: a consumer polling `G
 
 idstream implements and benchmarks several strategies for solving this, each making different tradeoffs between throughput, coverage, and discovery latency.
 
+The main algo of the repo is the BinaryFrontier, but feel free to add your solutions to the problem. The less attempts means less hammering on the proxies.
+
 ## Algorithms
 
 | Algorithm | Strategy |
