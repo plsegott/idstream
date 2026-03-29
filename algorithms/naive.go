@@ -1,20 +1,16 @@
 package algorithms
 
-import (
-	"time"
-
-	"github.com/plsegott/idstream/testing/common"
-)
+import "time"
 
 const naiveTickInterval = 1 * time.Second
 
-func Naive(getter common.Getter, start time.Time, maxSimTime time.Duration) {
+func Naive[T any](getter Getter[T], start time.Time, maxSimTime time.Duration) {
 	currentTime := start
 	endTime := start.Add(maxSimTime)
 	index := 0
 
 	for !currentTime.After(endTime) {
-		_, err := getter.GetAd(index, currentTime)
+		_, err := getter.Get(index, currentTime)
 
 		if err != nil {
 			currentTime = currentTime.Add(naiveTickInterval)

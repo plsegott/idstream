@@ -3,8 +3,6 @@ package algorithms
 import (
 	"sync"
 	"time"
-
-	"github.com/plsegott/idstream/testing/common"
 )
 
 const chaserTickInterval = 10 * time.Second
@@ -27,7 +25,7 @@ type abandonRecorder interface {
 	RecordAbandoned(index int)
 }
 
-func Chaser(getter common.Getter, start time.Time, maxWorkers int, maxAttempts int, maxSimTime time.Duration) {
+func Chaser[T any](getter Getter[T], start time.Time, maxWorkers int, maxAttempts int, maxSimTime time.Duration) {
 	if maxWorkers <= 0 {
 		maxWorkers = 1
 	}
@@ -49,7 +47,7 @@ func Chaser(getter common.Getter, start time.Time, maxWorkers int, maxAttempts i
 	wg.Wait()
 }
 
-func runWorker(getter common.Getter, start time.Time, coord *coordinator, maxAttempts int, maxSimTime time.Duration) {
+func runWorker[T any](getter Getter[T], start time.Time, coord *coordinator, maxAttempts int, maxSimTime time.Duration) {
 	currentTime := start
 	endTime := start.Add(maxSimTime)
 
@@ -62,7 +60,7 @@ func runWorker(getter common.Getter, start time.Time, coord *coordinator, maxAtt
 	}
 
 	for !currentTime.After(endTime) {
-		_, err := getter.GetAd(index, currentTime)
+		_, err := getter.Get(index, currentTime)
 
 		if err != nil {
 			attemptsForCurrentIndex++

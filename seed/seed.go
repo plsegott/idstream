@@ -14,6 +14,8 @@ type Ad struct {
 	Success   bool
 }
 
+func (a Ad) GetID() string { return a.Id }
+
 type Seed struct {
 	Ads    []Ad
 	Rng    *rand.Rand

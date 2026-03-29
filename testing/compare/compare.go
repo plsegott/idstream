@@ -16,38 +16,26 @@ type NamedResult struct {
 
 func RunNaive(accessor *seed.Accessor, start time.Time, maxSimTime time.Duration) NamedResult {
 	rec := common.NewRecorder(accessor)
-	algorithms.Naive(rec, start, maxSimTime)
-	return NamedResult{
-		Name:   "naive",
-		Result: rec.Result(),
-	}
+	algorithms.Naive[seed.Ad](rec, start, maxSimTime)
+	return NamedResult{Name: "naive", Result: rec.Result()}
 }
 
 func RunChaser(accessor *seed.Accessor, start time.Time, maxWorkers int, maxAttempts int, maxSimTime time.Duration) NamedResult {
 	rec := common.NewRecorder(accessor)
-	algorithms.Chaser(rec, start, maxWorkers, maxAttempts, maxSimTime)
-	return NamedResult{
-		Name:   "chaser",
-		Result: rec.Result(),
-	}
+	algorithms.Chaser[seed.Ad](rec, start, maxWorkers, maxAttempts, maxSimTime)
+	return NamedResult{Name: "chaser", Result: rec.Result()}
 }
 
 func RunBinaryFrontier(accessor *seed.Accessor, start time.Time, maxWorkers int, maxSimTime time.Duration) NamedResult {
 	rec := common.NewRecorder(accessor)
-	algorithms.BinaryFrontier(rec, start, maxWorkers, maxSimTime)
-	return NamedResult{
-		Name:   "binaryfrontier",
-		Result: rec.Result(),
-	}
+	algorithms.BinaryFrontier[seed.Ad](rec, start, maxWorkers, maxSimTime)
+	return NamedResult{Name: "binaryfrontier", Result: rec.Result()}
 }
 
 func RunLookahead(accessor *seed.Accessor, start time.Time, steps int, maxSimTime time.Duration) NamedResult {
 	rec := common.NewRecorder(accessor)
-	algorithms.Lookahead(rec, start, steps, maxSimTime)
-	return NamedResult{
-		Name:   "lookahead",
-		Result: rec.Result(),
-	}
+	algorithms.Lookahead[seed.Ad](rec, start, steps, maxSimTime)
+	return NamedResult{Name: "lookahead", Result: rec.Result()}
 }
 
 func PrintResults(results []NamedResult, totalSuccessful int) {

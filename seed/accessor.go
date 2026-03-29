@@ -22,7 +22,7 @@ func CountSuccessful(ads []Ad) int {
 	return n
 }
 
-func (a *Accessor) GetLatestLiveAd(now time.Time) (Ad, error) {
+func (a *Accessor) GetLatest(now time.Time) (Ad, error) {
 	for i := len(a.Ads) - 1; i >= 0; i-- {
 		ad := a.Ads[i]
 		if ad.Success && !now.Before(ad.LiveAt) {
@@ -32,7 +32,7 @@ func (a *Accessor) GetLatestLiveAd(now time.Time) (Ad, error) {
 	return Ad{}, ErrUnavailable
 }
 
-func (a *Accessor) GetAd(index int, now time.Time) (Ad, error) {
+func (a *Accessor) Get(index int, now time.Time) (Ad, error) {
 	if index < 0 || index >= len(a.Ads) {
 		return Ad{}, ErrUnavailable
 	}

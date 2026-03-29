@@ -7,19 +7,14 @@ import (
 	"github.com/plsegott/idstream/seed"
 )
 
-type frontierInner interface {
-	Getter
-	GetLatestLiveAd(now time.Time) (seed.Ad, error)
-}
-
 type Recorder struct {
-	mu      sync.Mutex
-	inner   Getter
-	seen    map[int]bool
-	result  Result
+	mu     sync.Mutex
+	inner  FrontierGetter
+	seen   map[int]bool
+	result Result
 }
 
-func NewRecorder(inner Getter) *Recorder {
+func NewRecorder(inner FrontierGetter) *Recorder {
 	return &Recorder{
 		inner: inner,
 		seen:  make(map[int]bool),
@@ -29,8 +24,8 @@ func NewRecorder(inner Getter) *Recorder {
 	}
 }
 
-func (r *Recorder) GetAd(index int, now time.Time) (seed.Ad, error) {
-	ad, err := r.inner.GetAd(index, now)
+func (r *Recorder) Get(index int, now time.Time) (seed.Ad, error) {
+	ad, err := r.inner.Get(index, now)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -48,7 +43,6 @@ func (r *Recorder) GetAd(index int, now time.Time) (seed.Ad, error) {
 		r.result.LastIndexSeen = index
 	}
 
-	// Only count unique discoveries.
 	if r.seen[index] {
 		return ad, nil
 	}
@@ -80,11 +74,8 @@ func (r *Recorder) GetAd(index int, now time.Time) (seed.Ad, error) {
 	return ad, nil
 }
 
-func (r *Recorder) GetLatestLiveAd(now time.Time) (seed.Ad, error) {
-	if fi, ok := r.inner.(frontierInner); ok {
-		return fi.GetLatestLiveAd(now)
-	}
-	return seed.Ad{}, seed.ErrUnavailable
+func (r *Recorder) GetLatest(now time.Time) (seed.Ad, error) {
+	return r.inner.GetLatest(now)
 }
 
 func (r *Recorder) RecordAbandoned(index int) {

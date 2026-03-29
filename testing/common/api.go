@@ -1,16 +1,11 @@
 package common
 
 import (
-	"time"
-
+	"github.com/plsegott/idstream/algorithms"
 	"github.com/plsegott/idstream/seed"
 )
 
-type Getter interface {
-	GetAd(index int, now time.Time) (seed.Ad, error)
-}
-
-type FrontierGetter interface {
-	Getter
-	GetLatestLiveAd(now time.Time) (seed.Ad, error)
-}
+// Getter and FrontierGetter are re-exported here for convenience so benchmark
+// code only needs to import testing/common.
+type Getter = algorithms.Getter[seed.Ad]
+type FrontierGetter = algorithms.FrontierGetter[seed.Ad]

@@ -3,8 +3,6 @@ package algorithms
 import (
 	"strconv"
 	"time"
-
-	"github.com/plsegott/idstream/testing/common"
 )
 
 const lookaheadTickInterval = 1 * time.Second
@@ -13,13 +11,7 @@ const lookaheadDefaultSteps = 500
 // Lookahead resolves the live frontier on each tick and sweeps a fixed window
 // of `steps` indexes ahead of it in a single thread, minimising missed
 // resources by repeatedly covering the active processing zone.
-func Lookahead(getter common.Getter, start time.Time, steps int, maxSimTime time.Duration) {
-	fg, ok := getter.(frontierGetter)
-	if !ok {
-		Naive(getter, start, maxSimTime)
-		return
-	}
-
+func Lookahead[T IDer](getter FrontierGetter[T], start time.Time, steps int, maxSimTime time.Duration) {
 	if steps <= 0 {
 		steps = lookaheadDefaultSteps
 	}
@@ -29,27 +21,27 @@ func Lookahead(getter common.Getter, start time.Time, steps int, maxSimTime time
 	baseID := -1
 
 	for !currentTime.After(endTime) {
-		frontierAd, err := fg.GetLatestLiveAd(currentTime)
+		frontierRes, err := getter.GetLatest(currentTime)
 		if err != nil {
 			currentTime = currentTime.Add(lookaheadTickInterval)
 			continue
 		}
 
 		if baseID == -1 {
-			first, err := fg.GetAd(0, currentTime)
+			first, err := getter.Get(0, currentTime)
 			if err != nil {
 				currentTime = currentTime.Add(lookaheadTickInterval)
 				continue
 			}
-			id, _ := strconv.Atoi(first.Id)
+			id, _ := strconv.Atoi(first.GetID())
 			baseID = id
 		}
 
-		frontierID, _ := strconv.Atoi(frontierAd.Id)
+		frontierID, _ := strconv.Atoi(frontierRes.GetID())
 		frontierIndex := frontierID - baseID
 
 		for i := frontierIndex; i <= frontierIndex+steps; i++ {
-			fg.GetAd(i, currentTime)
+			getter.Get(i, currentTime)
 		}
 
 		currentTime = currentTime.Add(lookaheadTickInterval)

@@ -5,15 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/plsegott/idstream/seed"
-	"github.com/plsegott/idstream/testing/common"
 )
-
-type frontierGetter interface {
-	common.Getter
-	GetLatestLiveAd(now time.Time) (seed.Ad, error)
-}
 
 // maxProcessingDelay is the upper bound on resource processing time
 // (seed generates 2–7 minute delays). After this window a persistent error
@@ -26,21 +18,22 @@ type pendingEntry struct {
 	firstAttempt time.Time
 }
 
-// BinaryFrontier discovers ads by:
-//  1. Calling GetLatestLiveAd to anchor the live frontier.
+// IDer is an optional interface resources can implement to expose their
+// sequential integer ID. BinaryFrontier uses this to derive slice indexes
+// arithmetically from the frontier resource.
+type IDer interface {
+	GetID() string
+}
+
+// BinaryFrontier discovers resources by:
+//  1. Calling GetLatest to anchor the live frontier.
 //  2. Deriving the frontier's slice index arithmetically from the sequential ID
 //     (frontierIndex = frontierID - baseID).
 //  3. Fanning out a concurrent scan over [nextIndex, frontierIndex].
 //  4. Maintaining a retry set for indexes not yet live at scan time —
 //     retried each round until maxProcessingDelay has elapsed, after which
 //     persistent errors are treated as permanent failures.
-func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSimTime time.Duration) {
-	fg, ok := getter.(frontierGetter)
-	if !ok {
-		Naive(getter, start, maxSimTime)
-		return
-	}
-
+func BinaryFrontier[T IDer](getter FrontierGetter[T], start time.Time, maxWorkers int, maxSimTime time.Duration) {
 	if maxWorkers <= 0 {
 		maxWorkers = 1
 	}
@@ -54,23 +47,23 @@ func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSi
 	pending := map[int]pendingEntry{}
 
 	for !currentTime.After(endTime) {
-		frontierAd, err := fg.GetLatestLiveAd(currentTime)
+		frontierRes, err := getter.GetLatest(currentTime)
 		if err != nil {
 			currentTime = currentTime.Add(binaryFrontierErrorBackoff)
 			continue
 		}
 
 		if baseID == -1 {
-			first, err := fg.GetAd(0, currentTime)
+			first, err := getter.Get(0, currentTime)
 			if err != nil {
 				currentTime = currentTime.Add(binaryFrontierErrorBackoff)
 				continue
 			}
-			id, _ := strconv.Atoi(first.Id)
+			id, _ := strconv.Atoi(first.GetID())
 			baseID = id
 		}
 
-		frontierID, _ := strconv.Atoi(frontierAd.Id)
+		frontierID, _ := strconv.Atoi(frontierRes.GetID())
 		frontierIndex := frontierID - baseID
 
 		// Build the scan list: pending retries + new indexes up to the frontier.
@@ -90,7 +83,6 @@ func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSi
 			}
 		}
 
-		// Scan concurrently, collecting failed indexes for the retry window.
 		type scanResult struct {
 			index int
 			ok    bool
@@ -113,19 +105,17 @@ func BinaryFrontier(getter common.Getter, start time.Time, maxWorkers int, maxSi
 					if i >= len(results) {
 						return
 					}
-					_, err := fg.GetAd(results[i].index, currentTime)
+					_, err := getter.Get(results[i].index, currentTime)
 					results[i].ok = err == nil
 				}
 			}()
 		}
 		wg.Wait()
 
-		// Update pending based on scan results.
 		for _, r := range results {
 			if r.ok {
 				delete(pending, r.index)
 			} else if r.index >= nextIndex {
-				// Only add to pending if within the new range (not already pending).
 				if _, exists := pending[r.index]; !exists {
 					pending[r.index] = pendingEntry{firstAttempt: currentTime}
 				}
