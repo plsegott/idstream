@@ -2,7 +2,7 @@ package common
 
 import (
 	"github.com/plsegott/idstream/algorithms"
-	"github.com/plsegott/idstream/seed"
+	"github.com/plsegott/idstream/internal/seed"
 )
 
 // Getter and FrontierGetter are re-exported here for convenience so benchmark

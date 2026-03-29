@@ -3,8 +3,8 @@ package eval
 import (
 	"time"
 
-	"github.com/plsegott/idstream/seed"
-	"github.com/plsegott/idstream/testing/common"
+	"github.com/plsegott/idstream/internal/seed"
+	"github.com/plsegott/idstream/internal/testing/common"
 )
 
 type Stats struct {

@@ -10,8 +10,6 @@ func NewAccessor(ads []Ad) *Accessor {
 	return &Accessor{Ads: ads}
 }
 
-// CountSuccessful returns the total number of ads that will eventually go live
-// (Success=true), regardless of when they become available.
 func CountSuccessful(ads []Ad) int {
 	n := 0
 	for _, ad := range ads {
@@ -22,14 +20,14 @@ func CountSuccessful(ads []Ad) int {
 	return n
 }
 
-func (a *Accessor) GetLatest(now time.Time) (Ad, error) {
+func (a *Accessor) GetLatestIndex(now time.Time) (int, error) {
 	for i := len(a.Ads) - 1; i >= 0; i-- {
 		ad := a.Ads[i]
 		if ad.Success && !now.Before(ad.LiveAt) {
-			return ad, nil
+			return i, nil
 		}
 	}
-	return Ad{}, ErrUnavailable
+	return 0, ErrUnavailable
 }
 
 func (a *Accessor) Get(index int, now time.Time) (Ad, error) {

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/plsegott/idstream/seed"
+	"github.com/plsegott/idstream/internal/seed"
 )
 
 type Recorder struct {
@@ -74,8 +74,8 @@ func (r *Recorder) Get(index int, now time.Time) (seed.Ad, error) {
 	return ad, nil
 }
 
-func (r *Recorder) GetLatest(now time.Time) (seed.Ad, error) {
-	return r.inner.GetLatest(now)
+func (r *Recorder) GetLatestIndex(now time.Time) (int, error) {
+	return r.inner.GetLatestIndex(now)
 }
 
 func (r *Recorder) RecordAbandoned(index int) {
