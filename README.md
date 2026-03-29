@@ -1,25 +1,23 @@
 # idstream
 
-A simulation and benchmarking framework for comparing strategies that discover ads from an API with sequential integer IDs.
+A dynamic ID discovery engine for APIs that assign sequential integer IDs. Given a stream of resources that go live over time, idstream finds them as fast as possible with minimal lag.
 
 ## The Problem
 
-An ad platform assigns ads incrementing numeric IDs. Each ad takes 2–7 minutes to go live after creation, and roughly 50% fail permanently. A consumer polling `GET /ad/:id` must discover new ads as fast as possible — but every call returns the same error whether the ad doesn't exist yet, failed, or is just slow to go live. The question: **what polling strategy discovers the most ads with the lowest lag?**
+Some APIs assign resources incrementing numeric IDs. A resource may not be immediately available after creation — it could be processing, delayed, or permanently failed — and the API returns the same error in all cases. A consumer has no way to know whether to retry or move on.
 
-## How It Works
+idstream implements several strategies for discovering these resources efficiently, each making different tradeoffs between coverage, lag, and API call volume.
 
-The seed generates a realistic ad stream using Poisson-distributed arrival rates across configurable phases (e.g. slow → burst → cooldown). Algorithms poll a simulated `Accessor` that enforces the timing rules, and a `Recorder` wraps every call to collect stats.
-
-### Algorithms
+## Algorithms
 
 | Algorithm | Strategy |
 |---|---|
-| **Naive** | Single-threaded linear scan. Waits 1s on error before retrying the same index. |
-| **Chaser** | N concurrent workers each racing to claim the next index. Retries up to M times with a 10s gap, then abandons and moves on. |
-| **BinaryFrontier** | Queries `GetLatestLiveAd` to find the current frontier, computes its slice index from the ID, then concurrently scans the known window. Maintains a retry map for indexes that weren't live yet, expiring them after the max possible delay. |
-| **Lookahead** | Single-threaded. On every tick, finds the frontier and scans N steps ahead of it. Simple and effective — catches ads as they go live by repeatedly sweeping the active window. |
+| **Naive** | Single-threaded linear scan. Waits 1s on error before retrying. |
+| **Chaser** | N concurrent workers racing to claim the next index. Retries up to M times with a 10s gap, then abandons and moves on. |
+| **BinaryFrontier** | Anchors the live frontier via `GetLatestLiveAd`, computes its index from the ID, then concurrently scans the known window. Maintains a retry map for indexes that weren't live yet, expiring them after the maximum possible delay. |
+| **Lookahead** | Single-threaded. On every tick, finds the frontier and sweeps N steps ahead of it — simple and effective at catching resources the moment they go live. |
 
-### Sample Results (24h simulation, slow → burst → cooldown)
+## Benchmark Results (24h simulation, slow → burst → cooldown)
 
 ```
 Algorithm      Attempts   Discovered   AvgLag       MaxLag
@@ -33,6 +31,8 @@ BinaryFrontier wins on lag. Lookahead wins on coverage.
 
 ## Running
 
+The `seed/` package provides a simulated API for benchmarking — it generates a realistic resource stream with Poisson-distributed arrival rates and enforces live/failed timing rules. It is not part of the discovery engine itself.
+
 ```bash
 go run .
 ```
@@ -42,9 +42,7 @@ Adjust the phases and simulation duration in `main.go`.
 ## Structure
 
 ```
-seed/               Ad generation and accessor (the simulated API)
-algorithms/         Naive, Chaser, BinaryFrontier, Lookahead
-testing/common/     Getter interface, Recorder, Result types
-testing/eval/       Frontier gap analysis
-testing/compare/    Wires algorithms to the recorder and prints results
+algorithms/         Discovery strategies (Naive, Chaser, BinaryFrontier, Lookahead)
+seed/               Simulated API for benchmarking
+testing/            Recorder, result types, and comparison tooling
 ```
