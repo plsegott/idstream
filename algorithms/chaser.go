@@ -5,27 +5,22 @@ import (
 	"time"
 )
 
-const chaserTickInterval = 10 * time.Second
+const chaserRetryDelay = 10 * time.Second
 
 type coordinator struct {
 	mu        sync.Mutex
-	nextIndex int
+	nextID    int
 }
 
-func (c *coordinator) GetNextIndex() int {
+func (c *coordinator) Next() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	i := c.nextIndex
-	c.nextIndex++
-	return i
+	id := c.nextID
+	c.nextID++
+	return id
 }
 
-type abandonRecorder interface {
-	RecordAbandoned(index int)
-}
-
-func Chaser[T any](getter Getter[T], start time.Time, maxWorkers int, maxAttempts int, maxSimTime time.Duration) {
+func Chaser(startID int, maxWorkers int, maxAttempts int, fetch FetchFunc) {
 	if maxWorkers <= 0 {
 		maxWorkers = 1
 	}
@@ -33,50 +28,33 @@ func Chaser[T any](getter Getter[T], start time.Time, maxWorkers int, maxAttempt
 		maxAttempts = 1
 	}
 
-	coord := &coordinator{}
+	coord := &coordinator{nextID: startID}
 	var wg sync.WaitGroup
 
 	for i := 0; i < maxWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(getter, start, coord, maxAttempts, maxSimTime)
+			id := coord.Next()
+			attempts := 0
+
+			for {
+				err := fetch(id)
+				if err != nil {
+					attempts++
+					if attempts > maxAttempts {
+						id = coord.Next()
+						attempts = 0
+						continue
+					}
+					time.Sleep(chaserRetryDelay)
+					continue
+				}
+				id = coord.Next()
+				attempts = 0
+			}
 		}()
 	}
 
 	wg.Wait()
-}
-
-func runWorker[T any](getter Getter[T], start time.Time, coord *coordinator, maxAttempts int, maxSimTime time.Duration) {
-	currentTime := start
-	endTime := start.Add(maxSimTime)
-
-	index := coord.GetNextIndex()
-	attemptsForCurrentIndex := 0
-
-	resetWorker := func() {
-		index = coord.GetNextIndex()
-		attemptsForCurrentIndex = 0
-	}
-
-	for !currentTime.After(endTime) {
-		_, err := getter.Get(index, currentTime)
-
-		if err != nil {
-			attemptsForCurrentIndex++
-
-			if attemptsForCurrentIndex > maxAttempts {
-				if ar, ok := getter.(abandonRecorder); ok {
-					ar.RecordAbandoned(index)
-				}
-				resetWorker()
-				continue
-			}
-
-			currentTime = currentTime.Add(chaserTickInterval)
-			continue
-		}
-
-		resetWorker()
-	}
 }

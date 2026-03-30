@@ -2,21 +2,17 @@ package algorithms
 
 import "time"
 
-const naiveTickInterval = 1 * time.Second
+const naiveRetryDelay = 1 * time.Second
 
-func Naive[T any](getter Getter[T], start time.Time, maxSimTime time.Duration) {
-	currentTime := start
-	endTime := start.Add(maxSimTime)
-	index := 0
+func Naive(startID int, fetch FetchFunc) {
+	id := startID
 
-	for !currentTime.After(endTime) {
-		_, err := getter.Get(index, currentTime)
-
+	for {
+		err := fetch(id)
 		if err != nil {
-			currentTime = currentTime.Add(naiveTickInterval)
+			time.Sleep(naiveRetryDelay)
 			continue
 		}
-
-		index++
+		id++
 	}
 }

@@ -9,12 +9,12 @@ import (
 
 type Recorder struct {
 	mu     sync.Mutex
-	inner  FrontierGetter
+	inner  *seed.Accessor
 	seen   map[int]bool
 	result Result
 }
 
-func NewRecorder(inner FrontierGetter) *Recorder {
+func NewRecorder(inner *seed.Accessor) *Recorder {
 	return &Recorder{
 		inner: inner,
 		seen:  make(map[int]bool),

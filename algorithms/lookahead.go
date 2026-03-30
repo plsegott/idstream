@@ -6,27 +6,24 @@ const lookaheadTickInterval = 1 * time.Second
 const lookaheadDefaultSteps = 500
 
 // Lookahead resolves the live frontier on each tick and sweeps a fixed window
-// of `steps` indexes ahead of it in a single thread, minimising missed
-// resources by repeatedly covering the active processing zone.
-func Lookahead[T any](getter FrontierGetter[T], start time.Time, steps int, maxSimTime time.Duration) {
+// of `steps` IDs ahead of it, minimising missed resources by repeatedly
+// covering the active processing zone.
+func Lookahead(startID int, steps int, fetch FetchFunc, latest LatestFunc) {
 	if steps <= 0 {
 		steps = lookaheadDefaultSteps
 	}
 
-	currentTime := start
-	endTime := start.Add(maxSimTime)
-
-	for !currentTime.After(endTime) {
-		frontierIndex, err := getter.GetLatestIndex(currentTime)
+	for {
+		frontierID, err := latest()
 		if err != nil {
-			currentTime = currentTime.Add(lookaheadTickInterval)
+			time.Sleep(lookaheadTickInterval)
 			continue
 		}
 
-		for i := frontierIndex; i <= frontierIndex+steps; i++ {
-			getter.Get(i, currentTime)
+		for id := frontierID; id <= frontierID+steps; id++ {
+			fetch(id)
 		}
 
-		currentTime = currentTime.Add(lookaheadTickInterval)
+		time.Sleep(lookaheadTickInterval)
 	}
 }

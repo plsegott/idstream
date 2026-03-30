@@ -7,64 +7,61 @@ import (
 )
 
 const maxProcessingDelay = 8 * time.Minute
+const binaryFrontierRetryDelay = 1 * time.Second
 const binaryFrontierTickInterval = 10 * time.Second
-const binaryFrontierErrorBackoff = 1 * time.Second
 
 type pendingEntry struct {
 	firstAttempt time.Time
 }
 
 // BinaryFrontier discovers resources by:
-//  1. Calling GetLatestIndex to anchor the live frontier.
-//  2. Fanning out a concurrent scan over [nextIndex, frontierIndex].
-//  3. Maintaining a retry set for indexes not yet live at scan time —
+//  1. Calling latest to anchor the live frontier.
+//  2. Fanning out a concurrent scan over [nextID, frontierID].
+//  3. Maintaining a retry set for IDs not yet live at scan time —
 //     retried each round until maxProcessingDelay has elapsed, after which
 //     persistent errors are treated as permanent failures.
-func BinaryFrontier[T any](getter FrontierGetter[T], start time.Time, maxWorkers int, maxSimTime time.Duration) {
+func BinaryFrontier(startID int, maxWorkers int, fetch FetchFunc, latest LatestFunc) {
 	if maxWorkers <= 0 {
 		maxWorkers = 1
 	}
 
-	currentTime := start
-	endTime := start.Add(maxSimTime)
-	nextIndex := 0
+	nextID := startID
 	pending := map[int]pendingEntry{}
 
-	for !currentTime.After(endTime) {
-		frontierIndex, err := getter.GetLatestIndex(currentTime)
+	for {
+		frontierID, err := latest()
 		if err != nil {
-			currentTime = currentTime.Add(binaryFrontierErrorBackoff)
+			time.Sleep(binaryFrontierRetryDelay)
 			continue
 		}
 
-		toScan := make([]int, 0, len(pending)+(frontierIndex-nextIndex+1))
+		now := time.Now()
+		toScan := make([]int, 0, len(pending)+(frontierID-nextID+1))
 
-		for idx, entry := range pending {
-			if currentTime.Sub(entry.firstAttempt) < maxProcessingDelay {
-				toScan = append(toScan, idx)
+		for id, entry := range pending {
+			if now.Sub(entry.firstAttempt) < maxProcessingDelay {
+				toScan = append(toScan, id)
 			} else {
-				delete(pending, idx)
+				delete(pending, id)
 			}
 		}
 
-		for i := nextIndex; i <= frontierIndex; i++ {
+		for i := nextID; i <= frontierID; i++ {
 			if _, alreadyPending := pending[i]; !alreadyPending {
 				toScan = append(toScan, i)
 			}
 		}
 
 		type scanResult struct {
-			index int
-			ok    bool
+			id int
+			ok bool
 		}
 		results := make([]scanResult, len(toScan))
-		for i, idx := range toScan {
-			results[i].index = idx
+		for i, id := range toScan {
+			results[i].id = id
 		}
 
 		var cursor atomic.Int64
-		cursor.Store(0)
-
 		var wg sync.WaitGroup
 		for w := 0; w < maxWorkers; w++ {
 			wg.Add(1)
@@ -75,7 +72,7 @@ func BinaryFrontier[T any](getter FrontierGetter[T], start time.Time, maxWorkers
 					if i >= len(results) {
 						return
 					}
-					_, err := getter.Get(results[i].index, currentTime)
+					err := fetch(results[i].id)
 					results[i].ok = err == nil
 				}
 			}()
@@ -84,15 +81,15 @@ func BinaryFrontier[T any](getter FrontierGetter[T], start time.Time, maxWorkers
 
 		for _, r := range results {
 			if r.ok {
-				delete(pending, r.index)
-			} else if r.index >= nextIndex {
-				if _, exists := pending[r.index]; !exists {
-					pending[r.index] = pendingEntry{firstAttempt: currentTime}
+				delete(pending, r.id)
+			} else if r.id >= nextID {
+				if _, exists := pending[r.id]; !exists {
+					pending[r.id] = pendingEntry{firstAttempt: now}
 				}
 			}
 		}
 
-		nextIndex = frontierIndex + 1
-		currentTime = currentTime.Add(binaryFrontierTickInterval)
+		nextID = frontierID + 1
+		time.Sleep(binaryFrontierTickInterval)
 	}
 }

@@ -1,17 +1,9 @@
 package algorithms
 
-import "time"
+// FetchFunc is called for each discovered ID.
+// Return nil on success, an error if the resource is unavailable or not yet live.
+type FetchFunc func(id int) error
 
-// Getter is the core interface for sequential ID discovery.
-// Implement this against any API that assigns monotonically increasing integer IDs.
-type Getter[T any] interface {
-	Get(index int, now time.Time) (T, error)
-}
-
-// FrontierGetter extends Getter with the ability to resolve the index of the
-// current live frontier — the highest index that is available right now.
-// Required by BinaryFrontier and Lookahead.
-type FrontierGetter[T any] interface {
-	Getter[T]
-	GetLatestIndex(now time.Time) (int, error)
-}
+// LatestFunc returns the ID of the latest live resource.
+// Used by frontier-aware algorithms to anchor their scan window.
+type LatestFunc func() (int, error)
