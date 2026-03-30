@@ -82,44 +82,52 @@ func RunChaser(accessor *seed.Accessor, start time.Time, maxWorkers int, maxAtte
 	return NamedResult{Name: "chaser", Result: rec.Result()}
 }
 
-func RunBinaryFrontier(accessor *seed.Accessor, start time.Time, maxWorkers int, maxSimTime time.Duration) NamedResult {
+func RunFrontierScanner(accessor *seed.Accessor, start time.Time, maxWorkers int, maxRetries int, windowSize int, maxRequestsPerSec int, maxSimTime time.Duration) NamedResult {
 	rec := common.NewRecorder(accessor)
 	currentTime := start
 	endTime := start.Add(maxSimTime)
-	nextIndex := 0
 
-	type pendingEntry struct{ firstAttempt time.Time }
+	type pendingEntry struct{ retries int }
 	pending := map[int]pendingEntry{}
-	maxDelay := 8 * time.Minute
+	highWater := -1
+	ads := accessor.Ads
 
 	for !currentTime.After(endTime) {
-		frontierIndex, err := rec.GetLatestIndex(currentTime)
-		if err != nil {
-			currentTime = currentTime.Add(1 * time.Second)
-			continue
-		}
-
-		toScan := make([]int, 0, len(pending)+(frontierIndex-nextIndex+1))
-		for idx, entry := range pending {
-			if currentTime.Sub(entry.firstAttempt) < maxDelay {
-				toScan = append(toScan, idx)
-			} else {
-				delete(pending, idx)
+		// Cap scan at creation frontier so we don't burn retries on IDs that
+		// don't exist yet. In production this is naturally handled because
+		// ticks happen at real-time speed.
+		createdFrontier := 0
+		for i := len(ads) - 1; i >= 0; i-- {
+			if !ads[i].CreatedAt.After(currentTime) {
+				createdFrontier = i
+				break
 			}
 		}
-		for i := nextIndex; i <= frontierIndex; i++ {
+
+		scanStart := highWater + 1
+		scanEnd := highWater + windowSize
+		if scanEnd > createdFrontier {
+			scanEnd = createdFrontier
+		}
+
+		// Build scan list: new IDs in window + pending retries from behind.
+		toScan := make([]int, 0, windowSize+len(pending))
+		for i := scanStart; i <= scanEnd; i++ {
 			if _, ok := pending[i]; !ok {
 				toScan = append(toScan, i)
 			}
 		}
+		for id := range pending {
+			toScan = append(toScan, id)
+		}
 
 		type scanResult struct {
-			index int
-			ok    bool
+			id int
+			ok bool
 		}
 		results := make([]scanResult, len(toScan))
-		for i, idx := range toScan {
-			results[i].index = idx
+		for i, id := range toScan {
+			results[i].id = id
 		}
 
 		var cursor atomic.Int64
@@ -133,7 +141,7 @@ func RunBinaryFrontier(accessor *seed.Accessor, start time.Time, maxWorkers int,
 					if i >= len(results) {
 						return
 					}
-					_, err := rec.Get(results[i].index, currentTime)
+					_, err := rec.Get(results[i].id, currentTime)
 					results[i].ok = err == nil
 				}
 			}()
@@ -142,37 +150,41 @@ func RunBinaryFrontier(accessor *seed.Accessor, start time.Time, maxWorkers int,
 
 		for _, r := range results {
 			if r.ok {
-				delete(pending, r.index)
-			} else if r.index >= nextIndex {
-				if _, exists := pending[r.index]; !exists {
-					pending[r.index] = pendingEntry{firstAttempt: currentTime}
+				delete(pending, r.id)
+				if r.id > highWater {
+					highWater = r.id
+				}
+			} else {
+				e := pending[r.id]
+				e.retries++
+				if e.retries >= maxRetries {
+					rec.RecordAbandoned(r.id)
+					delete(pending, r.id)
+				} else {
+					pending[r.id] = e
 				}
 			}
 		}
 
-		nextIndex = frontierIndex + 1
-		currentTime = currentTime.Add(10 * time.Second)
+		currentTime = currentTime.Add(1 * time.Second)
 	}
 
-	return NamedResult{Name: "binaryfrontier", Result: rec.Result()}
+	return NamedResult{Name: "frontierscanner", Result: rec.Result()}
 }
 
 func RunLookahead(accessor *seed.Accessor, start time.Time, steps int, maxSimTime time.Duration) NamedResult {
 	rec := common.NewRecorder(accessor)
 	currentTime := start
 	endTime := start.Add(maxSimTime)
+	id := 0
 
 	for !currentTime.After(endTime) {
-		frontierIndex, err := rec.GetLatestIndex(currentTime)
-		if err != nil {
-			currentTime = currentTime.Add(1 * time.Second)
-			continue
+		for i := id; i <= id+steps; i++ {
+			_, err := rec.Get(i, currentTime)
+			if err == nil {
+				id = i + 1
+			}
 		}
-
-		for i := frontierIndex; i <= frontierIndex+steps; i++ {
-			rec.Get(i, currentTime)
-		}
-
 		currentTime = currentTime.Add(1 * time.Second)
 	}
 

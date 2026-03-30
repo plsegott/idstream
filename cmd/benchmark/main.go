@@ -21,7 +21,8 @@ func main() {
 	results := []compare.NamedResult{
 		compare.RunNaive(accessor, start, 24*time.Hour),
 		compare.RunChaser(accessor, start, 200, 5, 24*time.Hour),
-		compare.RunBinaryFrontier(accessor, start, 200, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 480, 1500, 0, 24*time.Hour),
+
 		compare.RunLookahead(accessor, start, 500, 24*time.Hour),
 	}
 
