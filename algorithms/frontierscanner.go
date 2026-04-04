@@ -43,15 +43,17 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 		scanStart := highWater + 1
 		scanEnd := highWater + windowSize
 
-		// Build scan list: new IDs in window + pending retries from behind.
+		// New IDs at the frontier get priority. Pending retries fill remaining capacity.
 		toScan := make([]int, 0, windowSize+len(pending))
 		for i := scanStart; i <= scanEnd; i++ {
 			if _, ok := pending[i]; !ok {
 				toScan = append(toScan, i)
 			}
 		}
-		for id := range pending {
-			toScan = append(toScan, id)
+		if maxRequestsPerSec <= 0 || len(toScan) < maxRequestsPerSec {
+			for id := range pending {
+				toScan = append(toScan, id)
+			}
 		}
 
 		type scanResult struct {

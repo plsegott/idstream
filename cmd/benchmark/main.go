@@ -19,11 +19,16 @@ func main() {
 	start := s.Ads[0].CreatedAt
 
 	results := []compare.NamedResult{
-		compare.RunNaive(accessor, start, 24*time.Hour),
-		compare.RunChaser(accessor, start, 200, 5, 24*time.Hour),
-		compare.RunFrontierScanner(accessor, start, 200, 480, 1500, 0, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 120, 800, 100, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 120, 800, 150, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 120, 800, 200, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 120, 800, 250, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 120, 800, 300, 24*time.Hour),
 
-		compare.RunLookahead(accessor, start, 500, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 120, 800, 150, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 240, 800, 150, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 360, 800, 150, 24*time.Hour),
+		compare.RunFrontierScanner(accessor, start, 200, 480, 800, 150, 24*time.Hour),
 	}
 
 	compare.PrintResults(results, seed.CountSuccessful(s.Ads))
