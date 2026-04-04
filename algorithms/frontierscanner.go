@@ -8,10 +8,10 @@ import (
 
 const frontierScannerTickInterval = 1 * time.Second
 
-// FrontierScanner discovers resources by scanning a window ahead of the highest
-// known live ID. Failed IDs are retried up to maxRetries times to handle
-// resources that are created but not yet live. maxRequestsPerSec limits the
-// total number of fetch calls per second across all workers (0 = unlimited).
+// FrontierScanner discovers resources using two independent worker pools:
+// frontier workers continuously scan ahead of the highest known live ID,
+// while retry workers handle failed IDs in the background.
+// maxRequestsPerSec limits total fetch calls per second (0 = unlimited).
 func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int, maxRequestsPerSec int, fetch FetchFunc) {
 	if maxWorkers <= 0 {
 		maxWorkers = 1
@@ -23,13 +23,19 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 		windowSize = 1000
 	}
 
+	frontierWorkers := maxWorkers / 2
+	if frontierWorkers < 1 {
+		frontierWorkers = 1
+	}
+	retryWorkers := maxWorkers - frontierWorkers
+
 	type pendingEntry struct {
 		retries int
 	}
 
-	// highWater is the highest ID we've ever seen succeed.
-	// We always scan [highWater+1, highWater+windowSize] for new IDs.
+	var mu sync.Mutex
 	highWater := startID - 1
+	nextFrontier := startID
 	pending := map[int]pendingEntry{}
 
 	var limiter <-chan time.Time
@@ -39,70 +45,101 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 		limiter = ticker.C
 	}
 
-	for {
-		scanStart := highWater + 1
-		scanEnd := highWater + windowSize
-
-		// New IDs at the frontier get priority. Pending retries fill remaining capacity.
-		toScan := make([]int, 0, windowSize+len(pending))
-		for i := scanStart; i <= scanEnd; i++ {
-			if _, ok := pending[i]; !ok {
-				toScan = append(toScan, i)
-			}
+	tryFetch := func(id int) bool {
+		if limiter != nil {
+			<-limiter
 		}
-		if maxRequestsPerSec <= 0 || len(toScan) < maxRequestsPerSec {
-			for id := range pending {
-				toScan = append(toScan, id)
-			}
-		}
-
-		type scanResult struct {
-			id int
-			ok bool
-		}
-		results := make([]scanResult, len(toScan))
-		for i, id := range toScan {
-			results[i].id = id
-		}
-
-		var cursor atomic.Int64
-		var wg sync.WaitGroup
-		for w := 0; w < maxWorkers; w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for {
-					i := int(cursor.Add(1) - 1)
-					if i >= len(results) {
-						return
-					}
-					if limiter != nil {
-						<-limiter
-					}
-					err := fetch(results[i].id)
-					results[i].ok = err == nil
-				}
-			}()
-		}
-		wg.Wait()
-
-		for _, r := range results {
-			if r.ok {
-				delete(pending, r.id)
-				if r.id > highWater {
-					highWater = r.id
-				}
-			} else {
-				e := pending[r.id]
-				e.retries++
-				if e.retries >= maxRetries {
-					delete(pending, r.id)
-				} else {
-					pending[r.id] = e
-				}
-			}
-		}
-
-		time.Sleep(frontierScannerTickInterval)
+		return fetch(id) == nil
 	}
+
+	// Frontier workers — always advance highWater forward.
+	var frontierWg sync.WaitGroup
+	var frontierCursor atomic.Int64
+	frontierCursor.Store(int64(startID))
+
+	for w := 0; w < frontierWorkers; w++ {
+		frontierWg.Add(1)
+		go func() {
+			defer frontierWg.Done()
+			for {
+				id := int(frontierCursor.Add(1) - 1)
+
+				mu.Lock()
+				if id > highWater+windowSize {
+					// Caught up to window edge, wait for highWater to advance.
+					mu.Unlock()
+					time.Sleep(frontierScannerTickInterval)
+					continue
+				}
+				mu.Unlock()
+
+				ok := tryFetch(id)
+
+				mu.Lock()
+				if ok {
+					if id > highWater {
+						highWater = id
+					}
+					delete(pending, id)
+				} else {
+					e := pending[id]
+					e.retries++
+					if e.retries < maxRetries {
+						pending[id] = e
+					} else {
+						delete(pending, id)
+					}
+				}
+				// Keep nextFrontier ahead of highWater.
+				if nextFrontier <= highWater {
+					nextFrontier = highWater + 1
+					frontierCursor.Store(int64(nextFrontier))
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+
+	// Retry workers — continuously retry pending IDs.
+	for w := 0; w < retryWorkers; w++ {
+		go func() {
+			for {
+				mu.Lock()
+				var id int
+				found := false
+				for k := range pending {
+					id = k
+					found = true
+					break
+				}
+				mu.Unlock()
+
+				if !found {
+					time.Sleep(frontierScannerTickInterval)
+					continue
+				}
+
+				ok := tryFetch(id)
+
+				mu.Lock()
+				if ok {
+					if id > highWater {
+						highWater = id
+					}
+					delete(pending, id)
+				} else {
+					e := pending[id]
+					e.retries++
+					if e.retries >= maxRetries {
+						delete(pending, id)
+					} else {
+						pending[id] = e
+					}
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+
+	frontierWg.Wait()
 }

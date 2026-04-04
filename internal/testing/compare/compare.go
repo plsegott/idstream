@@ -86,16 +86,18 @@ func RunFrontierScanner(accessor *seed.Accessor, start time.Time, maxWorkers int
 	rec := common.NewRecorder(accessor)
 	currentTime := start
 	endTime := start.Add(maxSimTime)
+	ads := accessor.Ads
+
+	frontierWorkers := maxWorkers / 2
+	if frontierWorkers < 1 {
+		frontierWorkers = 1
+	}
 
 	type pendingEntry struct{ retries int }
 	pending := map[int]pendingEntry{}
 	highWater := -1
-	ads := accessor.Ads
 
 	for !currentTime.After(endTime) {
-		// Cap scan at creation frontier so we don't burn retries on IDs that
-		// don't exist yet. In production this is naturally handled because
-		// ticks happen at real-time speed.
 		createdFrontier := 0
 		for i := len(ads) - 1; i >= 0; i-- {
 			if !ads[i].CreatedAt.After(currentTime) {
@@ -104,27 +106,33 @@ func RunFrontierScanner(accessor *seed.Accessor, start time.Time, maxWorkers int
 			}
 		}
 
-		scanStart := highWater + 1
 		scanEnd := highWater + windowSize
 		if scanEnd > createdFrontier {
 			scanEnd = createdFrontier
 		}
 
-		// New IDs at the frontier get priority. Pending retries fill remaining capacity.
-		toScan := make([]int, 0, windowSize+len(pending))
-		for i := scanStart; i <= scanEnd; i++ {
+		// Frontier scan list — new IDs only.
+		frontierScan := make([]int, 0, windowSize)
+		for i := highWater + 1; i <= scanEnd; i++ {
 			if _, ok := pending[i]; !ok {
-				toScan = append(toScan, i)
+				frontierScan = append(frontierScan, i)
 			}
 		}
-		if maxRequestsPerSec <= 0 || len(toScan) < maxRequestsPerSec {
-			for id := range pending {
-				toScan = append(toScan, id)
-			}
+		if maxRequestsPerSec > 0 && len(frontierScan) > frontierWorkers {
+			frontierScan = frontierScan[:frontierWorkers]
 		}
-		if maxRequestsPerSec > 0 && len(toScan) > maxRequestsPerSec {
-			toScan = toScan[:maxRequestsPerSec]
+
+		// Retry scan list — pending IDs only, remaining capacity.
+		retryCapacity := maxWorkers - len(frontierScan)
+		retryScan := make([]int, 0, len(pending))
+		for id := range pending {
+			retryScan = append(retryScan, id)
 		}
+		if maxRequestsPerSec > 0 && len(retryScan) > retryCapacity {
+			retryScan = retryScan[:retryCapacity]
+		}
+
+		toScan := append(frontierScan, retryScan...)
 
 		type scanResult struct {
 			id int
