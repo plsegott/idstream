@@ -101,10 +101,13 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 			for {
 				mu.Lock()
 				var id int
+				var entry pendingEntry
 				found := false
-				for k := range pending {
+				for k, v := range pending {
 					id = k
+					entry = v
 					found = true
+					delete(pending, k) // claim it before releasing lock
 					break
 				}
 				mu.Unlock()
@@ -116,22 +119,14 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 
 				ok := tryFetch(id)
 
-				mu.Lock()
-				if ok {
-					if id > highWater {
-						highWater = id
+				if !ok {
+					entry.retries++
+					mu.Lock()
+					if entry.retries < maxRetries {
+						pending[id] = entry
 					}
-					delete(pending, id)
-				} else {
-					e := pending[id]
-					e.retries++
-					if e.retries >= maxRetries {
-						delete(pending, id)
-					} else {
-						pending[id] = e
-					}
+					mu.Unlock()
 				}
-				mu.Unlock()
 			}
 		}()
 	}
