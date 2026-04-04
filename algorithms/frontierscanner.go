@@ -37,16 +37,35 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 	highWater := startID - 1
 	pending := map[int]pendingEntry{}
 
-	var limiter <-chan time.Time
+	// Frontier gets 80% of the rate budget, retries get 20%.
+	var frontierLimiter, retryLimiter <-chan time.Time
 	if maxRequestsPerSec > 0 {
-		ticker := time.NewTicker(time.Second / time.Duration(maxRequestsPerSec))
-		defer ticker.Stop()
-		limiter = ticker.C
+		frontierRate := maxRequestsPerSec * 4 / 5
+		if frontierRate < 1 {
+			frontierRate = 1
+		}
+		retryRate := maxRequestsPerSec - frontierRate
+		if retryRate < 1 {
+			retryRate = 1
+		}
+		ft := time.NewTicker(time.Second / time.Duration(frontierRate))
+		rt := time.NewTicker(time.Second / time.Duration(retryRate))
+		defer ft.Stop()
+		defer rt.Stop()
+		frontierLimiter = ft.C
+		retryLimiter = rt.C
 	}
 
-	tryFetch := func(id int) bool {
-		if limiter != nil {
-			<-limiter
+	tryFrontier := func(id int) bool {
+		if frontierLimiter != nil {
+			<-frontierLimiter
+		}
+		return fetch(id) == nil
+	}
+
+	tryRetry := func(id int) bool {
+		if retryLimiter != nil {
+			<-retryLimiter
 		}
 		return fetch(id) == nil
 	}
@@ -72,7 +91,7 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 				}
 				mu.Unlock()
 
-				ok := tryFetch(id)
+				ok := tryFrontier(id)
 
 				mu.Lock()
 				// Frontier always advances — success or fail.
@@ -117,7 +136,7 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 					continue
 				}
 
-				ok := tryFetch(id)
+				ok := tryRetry(id)
 
 				if !ok {
 					entry.retries++
