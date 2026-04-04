@@ -164,9 +164,6 @@ func RunFrontierScanner(accessor *seed.Accessor, start time.Time, maxWorkers int
 		for _, r := range results {
 			if r.ok {
 				delete(pending, r.id)
-				if r.id > highWater {
-					highWater = r.id
-				}
 			} else {
 				e := pending[r.id]
 				e.retries++
@@ -176,6 +173,10 @@ func RunFrontierScanner(accessor *seed.Accessor, start time.Time, maxWorkers int
 				} else {
 					pending[r.id] = e
 				}
+			}
+			// Frontier always advances regardless of success or failure.
+			if r.id > highWater {
+				highWater = r.id
 			}
 		}
 

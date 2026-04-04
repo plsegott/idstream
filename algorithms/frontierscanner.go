@@ -35,7 +35,6 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 
 	var mu sync.Mutex
 	highWater := startID - 1
-	nextFrontier := startID
 	pending := map[int]pendingEntry{}
 
 	var limiter <-chan time.Time
@@ -76,10 +75,11 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 				ok := tryFetch(id)
 
 				mu.Lock()
+				// Frontier always advances — success or fail.
+				if id > highWater {
+					highWater = id
+				}
 				if ok {
-					if id > highWater {
-						highWater = id
-					}
 					delete(pending, id)
 				} else {
 					e := pending[id]
@@ -89,11 +89,6 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 					} else {
 						delete(pending, id)
 					}
-				}
-				// Keep nextFrontier ahead of highWater.
-				if nextFrontier <= highWater {
-					nextFrontier = highWater + 1
-					frontierCursor.Store(int64(nextFrontier))
 				}
 				mu.Unlock()
 			}
