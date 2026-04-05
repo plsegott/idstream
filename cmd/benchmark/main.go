@@ -9,9 +9,9 @@ import (
 
 func main() {
 	phases := []seed.Phase{
-		{Name: "slow", Duration: 8 * time.Hour, AvgAdsPerSec: 0.8},
-		{Name: "burst", Duration: 8 * time.Hour, AvgAdsPerSec: 3.5},
-		{Name: "cooldown", Duration: 8 * time.Hour, AvgAdsPerSec: 1.2},
+		{Name: "slow", Duration: 8 * time.Hour, AvgAdsPerSec: 10},
+		{Name: "burst", Duration: 8 * time.Hour, AvgAdsPerSec: 60},
+		{Name: "cooldown", Duration: 8 * time.Hour, AvgAdsPerSec: 30},
 	}
 
 	s := seed.RunSeedProfile(phases)

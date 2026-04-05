@@ -1,154 +1,80 @@
 package algorithms
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 )
 
-const frontierScannerTickInterval = 1 * time.Second
+type retryEntry struct {
+	id      int
+	retries int
+}
 
 // FrontierScanner discovers resources using two independent worker pools:
-// frontier workers continuously scan ahead of the highest known live ID,
-// while retry workers handle failed IDs in the background.
-// maxRequestsPerSec limits total fetch calls per second (0 = unlimited).
+// frontier workers continuously scan forward from startID, while retry workers
+// handle failed IDs in the background. maxRequestsPerSec limits retry fetch
+// calls per second (0 = unlimited). windowSize controls how far ahead of the
+// last success the frontier scans before looping back.
 func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int, maxRequestsPerSec int, fetch FetchFunc) {
-	if maxWorkers <= 0 {
-		maxWorkers = 1
+	if maxWorkers < 2 {
+		maxWorkers = 2
 	}
 	if maxRetries <= 0 {
 		maxRetries = 1
 	}
-	if windowSize <= 0 {
-		windowSize = 1000
-	}
 
 	frontierWorkers := maxWorkers / 2
-	if frontierWorkers < 1 {
-		frontierWorkers = 1
-	}
 	retryWorkers := maxWorkers - frontierWorkers
 
-	type pendingEntry struct {
-		retries int
-	}
+	retryQueue := make(chan retryEntry, 1<<20)
 
-	var mu sync.Mutex
-	highWater := startID - 1
-	pending := map[int]pendingEntry{}
-
-	// Frontier gets 80% of the rate budget, retries get 20%.
-	var frontierLimiter, retryLimiter <-chan time.Time
+	var retryLimiter <-chan time.Time
 	if maxRequestsPerSec > 0 {
-		frontierRate := maxRequestsPerSec * 4 / 5
-		if frontierRate < 1 {
-			frontierRate = 1
-		}
-		retryRate := maxRequestsPerSec - frontierRate
-		if retryRate < 1 {
-			retryRate = 1
-		}
-		ft := time.NewTicker(time.Second / time.Duration(frontierRate))
-		rt := time.NewTicker(time.Second / time.Duration(retryRate))
-		defer ft.Stop()
+		rt := time.NewTicker(time.Second / time.Duration(maxRequestsPerSec))
 		defer rt.Stop()
-		frontierLimiter = ft.C
 		retryLimiter = rt.C
 	}
 
-	tryFrontier := func(id int) bool {
-		if frontierLimiter != nil {
-			<-frontierLimiter
-		}
-		return fetch(id) == nil
-	}
-
-	tryRetry := func(id int) bool {
-		if retryLimiter != nil {
-			<-retryLimiter
-		}
-		return fetch(id) == nil
-	}
-
-	// Frontier workers — always advance highWater forward.
-	var frontierWg sync.WaitGroup
+	// Frontier workers — scan forward continuously, never throttled.
 	var frontierCursor atomic.Int64
 	frontierCursor.Store(int64(startID))
 
 	for w := 0; w < frontierWorkers; w++ {
-		frontierWg.Add(1)
 		go func() {
-			defer frontierWg.Done()
 			for {
 				id := int(frontierCursor.Add(1) - 1)
-
-				mu.Lock()
-				if id > highWater+windowSize {
-					// Caught up to window edge, wait for highWater to advance.
-					mu.Unlock()
-					time.Sleep(frontierScannerTickInterval)
-					continue
-				}
-				mu.Unlock()
-
-				ok := tryFrontier(id)
-
-				mu.Lock()
-				// Frontier always advances — success or fail.
-				if id > highWater {
-					highWater = id
-				}
-				if ok {
-					delete(pending, id)
-				} else {
-					e := pending[id]
-					e.retries++
-					if e.retries < maxRetries {
-						pending[id] = e
-					} else {
-						delete(pending, id)
+				if fetch(id) != nil {
+					select {
+					case retryQueue <- retryEntry{id: id}:
+					default:
 					}
 				}
-				mu.Unlock()
 			}
 		}()
 	}
 
-	// Retry workers — continuously retry pending IDs.
+	// Retry workers — drain the queue, O(1) per item.
+	done := make(chan struct{})
 	for w := 0; w < retryWorkers; w++ {
 		go func() {
-			for {
-				mu.Lock()
-				var id int
-				var entry pendingEntry
-				found := false
-				for k, v := range pending {
-					id = k
-					entry = v
-					found = true
-					delete(pending, k) // claim it before releasing lock
-					break
+			for entry := range retryQueue {
+				if retryLimiter != nil {
+					<-retryLimiter
 				}
-				mu.Unlock()
-
-				if !found {
-					time.Sleep(frontierScannerTickInterval)
+				if fetch(entry.id) == nil {
 					continue
 				}
-
-				ok := tryRetry(id)
-
-				if !ok {
-					entry.retries++
-					mu.Lock()
-					if entry.retries < maxRetries {
-						pending[id] = entry
+				entry.retries++
+				if entry.retries < maxRetries {
+					select {
+					case retryQueue <- entry:
+					default:
 					}
-					mu.Unlock()
 				}
 			}
+			close(done)
 		}()
 	}
 
-	frontierWg.Wait()
+	<-done
 }
