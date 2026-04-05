@@ -1,88 +1,106 @@
 package algorithms
 
 import (
-	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type retryEntry struct {
-	id      int
-	retries int
-}
+const frontierScannerTickInterval = 1 * time.Second
 
-// FrontierScanner discovers resources using two independent worker pools:
-// frontier workers continuously scan forward from startID, while retry workers
-// handle failed IDs in the background. maxRequestsPerSec limits retry fetch
-// calls per second (0 = unlimited).
+// FrontierScanner discovers resources by scanning a window ahead of the highest
+// known live ID. Failed IDs are retried up to maxRetries times to handle
+// resources that are created but not yet live. maxRequestsPerSec limits the
+// total number of fetch calls per second across all workers (0 = unlimited).
 func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int, maxRequestsPerSec int, fetch FetchFunc) {
-	if maxWorkers < 2 {
-		maxWorkers = 2
+	if maxWorkers <= 0 {
+		maxWorkers = 1
 	}
 	if maxRetries <= 0 {
 		maxRetries = 1
 	}
+	if windowSize <= 0 {
+		windowSize = 1000
+	}
 
-	frontierWorkers := maxWorkers / 2
-	retryWorkers := maxWorkers - frontierWorkers
+	type pendingEntry struct {
+		retries int
+	}
 
-	retryQueue := make(chan retryEntry, 1<<20)
+	// highWater is the highest ID we've ever seen succeed.
+	// We always scan [highWater+1, highWater+windowSize] for new IDs.
+	highWater := startID - 1
+	pending := map[int]pendingEntry{}
 
-	var retryLimiter <-chan time.Time
+	var limiter <-chan time.Time
 	if maxRequestsPerSec > 0 {
-		rt := time.NewTicker(time.Second / time.Duration(maxRequestsPerSec))
-		defer rt.Stop()
-		retryLimiter = rt.C
+		ticker := time.NewTicker(time.Second / time.Duration(maxRequestsPerSec))
+		defer ticker.Stop()
+		limiter = ticker.C
 	}
 
-	var frontierCursor atomic.Int64
-	frontierCursor.Store(int64(startID))
+	for {
+		scanStart := highWater + 1
+		scanEnd := highWater + windowSize
 
-	// Debug ticker — prints state every 5 seconds.
-	go func() {
-		for range time.NewTicker(5 * time.Second).C {
-			fmt.Printf("[FrontierScanner] frontier=%d | retryQueue=%d\n",
-				int(frontierCursor.Load()), len(retryQueue))
+		// Build scan list: new IDs in window + pending retries from behind.
+		toScan := make([]int, 0, windowSize+len(pending))
+		for i := scanStart; i <= scanEnd; i++ {
+			if _, ok := pending[i]; !ok {
+				toScan = append(toScan, i)
+			}
 		}
-	}()
+		for id := range pending {
+			toScan = append(toScan, id)
+		}
 
-	// Frontier workers — scan forward continuously, never throttled.
-	for w := 0; w < frontierWorkers; w++ {
-		go func() {
-			for {
-				id := int(frontierCursor.Add(1) - 1)
-				if fetch(id) != nil {
-					select {
-					case retryQueue <- retryEntry{id: id}:
-					default:
+		type scanResult struct {
+			id int
+			ok bool
+		}
+		results := make([]scanResult, len(toScan))
+		for i, id := range toScan {
+			results[i].id = id
+		}
+
+		var cursor atomic.Int64
+		var wg sync.WaitGroup
+		for w := 0; w < maxWorkers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					i := int(cursor.Add(1) - 1)
+					if i >= len(results) {
+						return
 					}
+					if limiter != nil {
+						<-limiter
+					}
+					err := fetch(results[i].id)
+					results[i].ok = err == nil
+				}
+			}()
+		}
+		wg.Wait()
+
+		for _, r := range results {
+			if r.ok {
+				delete(pending, r.id)
+				if r.id > highWater {
+					highWater = r.id
+				}
+			} else {
+				e := pending[r.id]
+				e.retries++
+				if e.retries >= maxRetries {
+					delete(pending, r.id)
+				} else {
+					pending[r.id] = e
 				}
 			}
-		}()
-	}
+		}
 
-	// Retry workers — drain the queue, O(1) per item.
-	done := make(chan struct{})
-	for w := 0; w < retryWorkers; w++ {
-		go func() {
-			for entry := range retryQueue {
-				if retryLimiter != nil {
-					<-retryLimiter
-				}
-				if fetch(entry.id) == nil {
-					continue
-				}
-				entry.retries++
-				if entry.retries < maxRetries {
-					select {
-					case retryQueue <- entry:
-					default:
-					}
-				}
-			}
-			close(done)
-		}()
+		time.Sleep(frontierScannerTickInterval)
 	}
-
-	<-done
 }
