@@ -1,6 +1,7 @@
 package algorithms
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -13,8 +14,7 @@ type retryEntry struct {
 // FrontierScanner discovers resources using two independent worker pools:
 // frontier workers continuously scan forward from startID, while retry workers
 // handle failed IDs in the background. maxRequestsPerSec limits retry fetch
-// calls per second (0 = unlimited). windowSize controls how far ahead of the
-// last success the frontier scans before looping back.
+// calls per second (0 = unlimited).
 func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int, maxRequestsPerSec int, fetch FetchFunc) {
 	if maxWorkers < 2 {
 		maxWorkers = 2
@@ -35,10 +35,18 @@ func FrontierScanner(startID int, maxWorkers int, maxRetries int, windowSize int
 		retryLimiter = rt.C
 	}
 
-	// Frontier workers — scan forward continuously, never throttled.
 	var frontierCursor atomic.Int64
 	frontierCursor.Store(int64(startID))
 
+	// Debug ticker — prints state every 5 seconds.
+	go func() {
+		for range time.NewTicker(5 * time.Second).C {
+			fmt.Printf("[FrontierScanner] frontier=%d | retryQueue=%d\n",
+				int(frontierCursor.Load()), len(retryQueue))
+		}
+	}()
+
+	// Frontier workers — scan forward continuously, never throttled.
 	for w := 0; w < frontierWorkers; w++ {
 		go func() {
 			for {
